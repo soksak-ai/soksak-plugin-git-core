@@ -47,7 +47,9 @@ export function createGitRunner(processApi) {
               }
             }),
             processApi.onExit(handle, (code) => {
-              finish(resolve, { code, stdout: out, stderr: err.trim() });
+              // args travel with the result: the failure envelope names the operation that failed
+              // without the caller having to repeat it at every call site.
+              finish(resolve, { code, stdout: out, stderr: err.trim(), args });
             }),
           );
         })

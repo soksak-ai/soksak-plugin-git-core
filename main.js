@@ -163,7 +163,7 @@ function createGitRunner(processApi) {
             }
           }),
           processApi.onExit(handle, (code) => {
-            finish(resolve, { code, stdout: out, stderr: err.trim() });
+            finish(resolve, { code, stdout: out, stderr: err.trim(), args });
           })
         );
       }).catch((e) => {
@@ -333,7 +333,19 @@ var index_default = {
       return app.project?.current?.()?.root ?? null;
     };
     const noPath = () => err("NO_PATH", msg("no project root \u2014 pass path", "\uD504\uB85C\uC81D\uD2B8 \uB8E8\uD2B8 \uC5C6\uC74C \u2014 path \uB97C \uC9C0\uC815\uD558\uC138\uC694"));
-    const gitErr = (r) => err("GIT_ERROR", r.stderr || `git exit ${r.code}`);
+    const gitDetail = (r) => r.stderr && r.stderr.trim() || r.stdout && r.stdout.trim() || `git exit ${r.code}`;
+    const gitOp = (r) => {
+      const a = r.args ?? [];
+      return a[0] === "worktree" ? `worktree ${a[1] ?? ""}`.trim() : String(a[0] ?? "git");
+    };
+    const gitErr = (r) => err(
+      "GIT_ERROR",
+      msg(
+        `git ${gitOp(r)} failed \u2014 git's own account is in detail`,
+        `git ${gitOp(r)} \uC2E4\uD328 \u2014 git \uC774 \uB0A8\uAE34 \uC6D0\uBB38\uC740 detail \uC5D0 \uC788\uC2B5\uB2C8\uB2E4`
+      ),
+      { data: { detail: gitDetail(r) } }
+    );
     const watches = /* @__PURE__ */ new Map();
     async function startWatch(root) {
       if (watches.has(root)) return { already: true, root, watching: watches.get(root).dirs };
@@ -394,7 +406,7 @@ var index_default = {
           const r = await runGit({ cwd: path, args: ["rev-parse", "--show-toplevel"] });
           if (r.code === 0) return { state: "repo", root: r.stdout.trim() };
           if (NOT_REPO_RE.test(r.stderr)) return { state: "not-repo" };
-          return { state: "error", error: r.stderr };
+          return { state: "error", error: gitDetail(r) };
         } catch (e) {
           return { state: "error", error: String(e?.message ?? e) };
         }

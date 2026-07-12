@@ -54,7 +54,30 @@ export default {
     };
     const noPath = () =>
       err("NO_PATH", msg("no project root — pass path", "프로젝트 루트 없음 — path 를 지정하세요"));
-    const gitErr = (r) => err("GIT_ERROR", r.stderr || `git exit ${r.code}`);
+    // git 이 실패를 설명한 스트림이 어느 쪽이든 그 원문 — porcelain 은 stdout 으로 서술하고
+    // (merge 충돌: stdout 에 CONFLICT…, stderr 0바이트), fatal 은 stderr 로 낸다. stderr 만 읽으면
+    // 충돌에 대고 "git exit 1" 이라고 답하게 된다 — git 이 이미 정확히 말해준 바로 그 경우에,
+    // 사람에게 아무것도 알려주지 않는 유일한 문장을. 파싱은 여전히 없다(스트림을 고를 뿐).
+    const gitDetail = (r) =>
+      (r.stderr && r.stderr.trim()) || (r.stdout && r.stdout.trim()) || `git exit ${r.code}`;
+
+    // 실패한 git 연산의 이름 — 인자에서 읽는다(사람 문장이 무엇이 실패했는지 말한다).
+    const gitOp = (r) => {
+      const a = r.args ?? [];
+      return a[0] === "worktree" ? `worktree ${a[1] ?? ""}`.trim() : String(a[0] ?? "git");
+    };
+
+    // message 는 사람 문장이고 명령이 소유한다(MESSAGE-PROTOCOL §3). 엔진 방언을 그 줄에 실으면
+    // 받는 쪽이 엔진의 말을 앱의 상태로 읽는다 — 원문은 버리지 않고 data.detail 로 내려보낸다.
+    const gitErr = (r) =>
+      err(
+        "GIT_ERROR",
+        msg(
+          `git ${gitOp(r)} failed — git's own account is in detail`,
+          `git ${gitOp(r)} 실패 — git 이 남긴 원문은 detail 에 있습니다`,
+        ),
+        { data: { detail: gitDetail(r) } },
+      );
 
     // ── L1 감시 원장 — root → { dirs, disposables, since }. 관찰면(watch.list)이자
     //    unwatch-before-delete 계약의 실행 지점. 실패는 무음 폴백 없이 상태로 노출.
@@ -133,7 +156,7 @@ export default {
           const r = await runGit({ cwd: path, args: ["rev-parse", "--show-toplevel"] });
           if (r.code === 0) return { state: "repo", root: r.stdout.trim() };
           if (NOT_REPO_RE.test(r.stderr)) return { state: "not-repo" };
-          return { state: "error", error: r.stderr };
+          return { state: "error", error: gitDetail(r) };
         } catch (e) {
           return { state: "error", error: String(e?.message ?? e) };
         }
