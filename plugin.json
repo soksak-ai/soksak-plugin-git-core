@@ -18,6 +18,9 @@
     "process",
     "fs:read"
   ],
+  "implements": [
+    "soksak-git-spec@1"
+  ],
   "contributes": {
     "commands": [
       {
@@ -25,6 +28,13 @@
         "title": {
           "ko": "저장소 판별",
           "en": "Locate repository root"
+        }
+      },
+      {
+        "name": "head",
+        "title": {
+          "ko": "현재 브랜치 확인",
+          "en": "Read the checked-out branch"
         }
       },
       {
@@ -67,6 +77,27 @@
         "title": {
           "ko": "변경 내용 비교",
           "en": "Show the diff"
+        }
+      },
+      {
+        "name": "diff.files",
+        "title": {
+          "ko": "브랜치 변경 파일 목록",
+          "en": "List a branch's changed files"
+        }
+      },
+      {
+        "name": "diff.range",
+        "title": {
+          "ko": "브랜치 변경 내용 비교",
+          "en": "Show a branch's diff"
+        }
+      },
+      {
+        "name": "branch.exists",
+        "title": {
+          "ko": "브랜치 존재 확인",
+          "en": "Check a branch exists"
         }
       },
       {
@@ -155,6 +186,14 @@
         "title": {
           "ko": "변경 파기",
           "en": "Discard changes"
+        },
+        "danger": "destructive"
+      },
+      {
+        "name": "merge",
+        "title": {
+          "ko": "브랜치 머지",
+          "en": "Merge a branch"
         },
         "danger": "destructive"
       }

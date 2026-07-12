@@ -22,6 +22,9 @@ function validBranchName(b) {
   if (b.includes("..") || b.endsWith(".lock") || b.endsWith("/") || b.endsWith(".")) return false;
   return true;
 }
+function validRef(r) {
+  return validBranchName(r) || sanitizeCommit(r);
+}
 function repoDirFromUrl(url) {
   if (typeof url !== "string") return null;
   const trimmed = url.replace(/\/+$/, "");
@@ -49,6 +52,61 @@ function insideRepo(root, rel) {
   const parts = rel.split("/");
   if (parts.includes("..") || parts.includes("")) return false;
   return true;
+}
+
+// src/range.js
+var STATUS = {
+  M: "modified",
+  A: "added",
+  D: "deleted",
+  R: "renamed",
+  C: "copied",
+  T: "typechange",
+  U: "unmerged"
+};
+function parseNameStatus(stdout) {
+  const out = [];
+  for (const line of String(stdout).split("\n")) {
+    if (!line.trim()) continue;
+    const cols = line.split("	");
+    const letter = (cols[0] || "")[0] || "";
+    const status = STATUS[letter] ?? "modified";
+    if ((letter === "R" || letter === "C") && cols.length >= 3) {
+      out.push({ status, path: cols[2], oldPath: cols[1] });
+    } else {
+      out.push({ status, path: cols[cols.length - 1] });
+    }
+  }
+  return out;
+}
+function parseNumstat(stdout) {
+  const map = /* @__PURE__ */ new Map();
+  for (const line of String(stdout).split("\n")) {
+    if (!line.trim()) continue;
+    const cols = line.split("	");
+    if (cols.length < 3) continue;
+    const added = cols[0] === "-" ? null : Number(cols[0]);
+    const deleted = cols[1] === "-" ? null : Number(cols[1]);
+    let path = cols.slice(2).join("	");
+    if (path.includes(" => ")) {
+      path = path.replace(/\{[^}]*? => ([^}]*?)\}/g, "$1").replace(/^.* => /, "");
+    }
+    map.set(path, { added, deleted, binary: added === null && deleted === null });
+  }
+  return map;
+}
+function mergeFileList(entries, counts) {
+  return (entries ?? []).map((f) => {
+    const n = counts?.get(f.path) ?? {};
+    return {
+      path: f.path,
+      status: f.status,
+      ...f.oldPath ? { oldPath: f.oldPath } : {},
+      added: n.added ?? null,
+      deleted: n.deleted ?? null,
+      binary: n.binary === true
+    };
+  });
 }
 
 // src/run.js
@@ -330,6 +388,25 @@ var index_default = {
         }
       }
     });
+    reg("head", {
+      description: "Read what is checked out here: the branch, its commit oid, and whether HEAD is detached. A detached HEAD reports branch:null and detached:true \u2014 it is a state to show, not an error.",
+      triggers: { ko: "\uD604\uC7AC \uBE0C\uB79C\uCE58 \uD655\uC778 \uD5E4\uB4DC \uCCB4\uD06C\uC544\uC6C3" },
+      params: { path: { type: "string", description: "Repository directory (omit = project root)" } },
+      returns: "{ branch: string|null, oid, detached }",
+      examples: ["sok plugin.soksak-plugin-git-core.head"],
+      message: (d) => d.detached ? msg(`detached at ${d.oid.slice(0, 7)}`, `\uBD84\uB9AC\uB41C HEAD ${d.oid.slice(0, 7)}`) : msg(`on ${d.branch}`, `${d.branch} \uBE0C\uB79C\uCE58`),
+      handler: async (p) => {
+        const path = resolvePath(p);
+        if (!path) return noPath();
+        const name = await runGit({ cwd: path, args: ["rev-parse", "--abbrev-ref", "HEAD"] });
+        if (name.code !== 0) return gitErr(name);
+        const oid = await runGit({ cwd: path, args: ["rev-parse", "HEAD"] });
+        if (oid.code !== 0) return gitErr(oid);
+        const branch = name.stdout.trim();
+        const detached = branch === "HEAD";
+        return { branch: detached ? null : branch, oid: oid.stdout.trim(), detached };
+      }
+    });
     reg("init", {
       description: "Run git init with initial branch main when the directory has no .git. Idempotent \u2014 an existing repository is a no-op reported as initialized:false.",
       triggers: { ko: "\uAE43 \uCD08\uAE30\uD654 \uC800\uC7A5\uC18C \uC0DD\uC131 init" },
@@ -440,36 +517,60 @@ var index_default = {
         watches: [...watches.values()].map((s) => ({ root: s.root, dirs: s.dirs, since: s.since }))
       })
     });
-    reg("worktree.add", {
-      description: "Add a worktree on a new branch: git worktree add --no-track -b <branch> <dir> <base>. Base defaults to HEAD and is recorded in repo config (soksak.worktree.<branch>.base). Default dir is <root>-wt/<branch-slug>, overridable via dir.",
-      triggers: { ko: "\uC6CC\uD06C\uD2B8\uB9AC \uCD94\uAC00 \uC0DD\uC131 \uBE0C\uB79C\uCE58 \uC791\uC5C5\uD2B8\uB9AC" },
+    reg("branch.exists", {
+      description: "Does a local branch exist? The question a consumer must answer before choosing between creating a worktree on a new branch and attaching one to the branch it already has.",
+      triggers: { ko: "\uBE0C\uB79C\uCE58 \uC874\uC7AC \uD655\uC778 \uC788\uB294\uC9C0" },
       params: {
         path: { type: "string", description: "Repository directory (omit = project root)" },
-        branch: { type: "string", description: "New branch name", required: true },
-        base: { type: "string", description: "Base ref (default HEAD)" },
-        dir: { type: "string", description: "Worktree directory (default <root>-wt/<branch-slug>)" }
+        branch: { type: "string", description: "Branch name", required: true }
       },
-      returns: "{ dir, branch, base }",
-      examples: [`sok plugin.soksak-plugin-git-core.worktree.add '{"branch":"feat/x"}'`],
-      message: (d) => msg(`worktree at ${d.dir}`, `\uC6CC\uD06C\uD2B8\uB9AC \uC0DD\uC131: ${d.dir}`),
+      returns: "{ exists }",
+      examples: [`sok plugin.soksak-plugin-git-core.branch.exists '{"branch":"feat/x"}'`],
+      message: (d) => d.exists ? msg("the branch exists", "\uBE0C\uB79C\uCE58\uAC00 \uC788\uC2B5\uB2C8\uB2E4") : msg("no such branch", "\uBE0C\uB79C\uCE58 \uC5C6\uC74C"),
       handler: async (p) => {
         const path = resolvePath(p);
         if (!path) return noPath();
         const branch = String(p.branch ?? "");
         if (!validBranchName(branch)) return err("INVALID_BRANCH", msg("invalid branch name", "\uBE0C\uB79C\uCE58\uBA85 \uD615\uC2DD \uC704\uBC18"));
+        const r = await runGit({ cwd: path, args: ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`] });
+        if (r.code === 0) return { exists: true };
+        if (r.code === 1) return { exists: false };
+        return gitErr(r);
+      }
+    });
+    reg("worktree.add", {
+      description: "Add a worktree. By default it creates a NEW branch at base (default HEAD), and records the base in repo config (soksak.worktree.<branch>.base). With attach:true it checks out an EXISTING branch instead \u2014 the reopen path, where the branch survived the last close and carries the work. Default dir is <root>-wt/<branch-slug>, overridable via dir.",
+      triggers: { ko: "\uC6CC\uD06C\uD2B8\uB9AC \uCD94\uAC00 \uC0DD\uC131 \uBE0C\uB79C\uCE58 \uC791\uC5C5\uD2B8\uB9AC \uC7AC\uBD80\uCC29" },
+      params: {
+        path: { type: "string", description: "Repository directory (omit = project root)" },
+        branch: { type: "string", description: "Branch name \u2014 created, or attached with attach:true", required: true },
+        base: { type: "string", description: "Base ref for a new branch (default HEAD); ignored with attach" },
+        dir: { type: "string", description: "Worktree directory (default <root>-wt/<branch-slug>)" },
+        attach: { type: "boolean", description: "Check out the existing branch instead of creating it", default: false }
+      },
+      returns: "{ dir, branch, base, attached }",
+      examples: [
+        `sok plugin.soksak-plugin-git-core.worktree.add '{"branch":"feat/x"}'`,
+        `sok plugin.soksak-plugin-git-core.worktree.add '{"branch":"feat/x","attach":true}'`
+      ],
+      message: (d) => d.attached ? msg(`attached ${d.branch} at ${d.dir}`, `${d.branch} \uC7AC\uBD80\uCC29: ${d.dir}`) : msg(`worktree at ${d.dir}`, `\uC6CC\uD06C\uD2B8\uB9AC \uC0DD\uC131: ${d.dir}`),
+      handler: async (p) => {
+        const path = resolvePath(p);
+        if (!path) return noPath();
+        const branch = String(p.branch ?? "");
+        if (!validBranchName(branch)) return err("INVALID_BRANCH", msg("invalid branch name", "\uBE0C\uB79C\uCE58\uBA85 \uD615\uC2DD \uC704\uBC18"));
+        const attach = p.attach === true;
         const base = typeof p.base === "string" && p.base ? p.base : "HEAD";
-        if (base !== "HEAD" && !validBranchName(base) && !sanitizeCommit(base)) {
+        if (!attach && base !== "HEAD" && !validRef(base)) {
           return err("INVALID_REF", msg("invalid base ref", "base \uCC38\uC870 \uD615\uC2DD \uC704\uBC18"));
         }
         const dir = typeof p.dir === "string" && p.dir ? p.dir : `${path}-wt/${branch.replaceAll("/", "-")}`;
-        const r = await runGit({
-          cwd: path,
-          args: ["worktree", "add", "--no-track", "-b", branch, "--", dir, base],
-          kind: "write"
-        });
+        const args = attach ? ["worktree", "add", "--", dir, branch] : ["worktree", "add", "--no-track", "-b", branch, "--", dir, base];
+        const r = await runGit({ cwd: path, args, kind: "write" });
         if (r.code !== 0) return gitErr(r);
+        if (attach) return { dir, branch, base: null, attached: true };
         await runGit({ cwd: path, args: ["config", `soksak.worktree.${branch}.base`, base], kind: "write" });
-        return { dir, branch, base };
+        return { dir, branch, base, attached: false };
       }
     });
     reg("worktree.list", {
@@ -734,6 +835,102 @@ var index_default = {
         const r = await runGit({ cwd: path, args });
         if (r.code !== 0) return gitErr(r);
         return { diff: r.stdout };
+      }
+    });
+    async function resolveBase(path, raw) {
+      if (typeof raw === "string" && raw) return validRef(raw) ? raw : false;
+      for (const b of ["main", "master"]) {
+        const r = await runGit({ cwd: path, args: ["show-ref", "--verify", "--quiet", `refs/heads/${b}`] });
+        if (r.code === 0) return b;
+      }
+      return null;
+    }
+    const noBase = () => err("NO_BASE", msg("no default branch \u2014 pass base", "\uAE30\uBCF8 \uBE0C\uB79C\uCE58 \uC5C6\uC74C \u2014 base \uB97C \uC9C0\uC815\uD558\uC138\uC694"));
+    const badRef = () => err("INVALID_REF", msg("ref not allowed", "\uD5C8\uC6A9\uB418\uC9C0 \uC54A\uB294 \uCC38\uC870"));
+    reg("diff.files", {
+      description: "List what a branch changed since it diverged: the three-dot range base...target. Each file carries its status and its line counts; a binary file reports binary:true with null counts rather than pretending nothing changed.",
+      triggers: { ko: "\uBE0C\uB79C\uCE58 \uBCC0\uACBD \uD30C\uC77C \uBAA9\uB85D \uB9AC\uBDF0 \uB300\uC0C1 \uBE44\uAD50" },
+      params: {
+        path: { type: "string", description: "Repository directory (omit = project root)" },
+        base: { type: "string", description: "Base ref (omit = the local default branch)" },
+        target: { type: "string", description: "Branch or commit under review", required: true }
+      },
+      returns: "{ base, target, files: [{path, status, oldPath?, added, deleted, binary}] }",
+      examples: [`sok plugin.soksak-plugin-git-core.diff.files '{"target":"feat/x"}'`],
+      message: (d) => msg(`${d.files.length} files changed`, `\uBCC0\uACBD \uD30C\uC77C ${d.files.length}\uAC1C`),
+      handler: async (p) => {
+        const path = resolvePath(p);
+        if (!path) return noPath();
+        const target = String(p.target ?? "");
+        if (!validRef(target)) return badRef();
+        const base = await resolveBase(path, p.base);
+        if (base === false) return badRef();
+        if (base === null) return noBase();
+        const range = `${base}...${target}`;
+        const ns = await runGit({ cwd: path, args: ["diff", "--name-status", range] });
+        if (ns.code !== 0) return gitErr(ns);
+        const nm = await runGit({ cwd: path, args: ["diff", "--numstat", range] });
+        if (nm.code !== 0) return gitErr(nm);
+        return { base, target, files: mergeFileList(parseNameStatus(ns.stdout), parseNumstat(nm.stdout)) };
+      }
+    });
+    reg("diff.range", {
+      description: "The unified diff of the three-dot range base...target, optionally narrowed to one file behind the -- path boundary. The two-point diff command answers about the working tree; this one answers about a branch.",
+      triggers: { ko: "\uBE0C\uB79C\uCE58 \uBCC0\uACBD \uB0B4\uC6A9 \uBE44\uAD50 \uB9AC\uBDF0 diff" },
+      params: {
+        path: { type: "string", description: "Repository directory (omit = project root)" },
+        base: { type: "string", description: "Base ref (omit = the local default branch)" },
+        target: { type: "string", description: "Branch or commit under review", required: true },
+        file: { type: "string", description: "Limit to this repository-relative path" }
+      },
+      returns: "{ base, target, diff }",
+      examples: [`sok plugin.soksak-plugin-git-core.diff.range '{"target":"feat/x","file":"src/a.ts"}'`],
+      message: (d) => d.diff.trim() ? msg("changes found", "\uBCC0\uACBD \uC788\uC74C") : msg("no changes", "\uBCC0\uACBD \uC5C6\uC74C"),
+      handler: async (p) => {
+        const path = resolvePath(p);
+        if (!path) return noPath();
+        const target = String(p.target ?? "");
+        if (!validRef(target)) return badRef();
+        const base = await resolveBase(path, p.base);
+        if (base === false) return badRef();
+        if (base === null) return noBase();
+        const args = ["diff", `${base}...${target}`];
+        if (typeof p.file === "string" && p.file) {
+          if (!insideRepo(path, p.file)) {
+            return err("INVALID_PARAMS", msg("path escapes the repository", "\uC800\uC7A5\uC18C \uBC16 \uACBD\uB85C"));
+          }
+          args.push("--", p.file);
+        }
+        const r = await runGit({ cwd: path, args });
+        if (r.code !== 0) return gitErr(r);
+        return { base, target, diff: r.stdout };
+      }
+    });
+    reg("merge", {
+      danger: "destructive",
+      description: "Merge a branch into what is checked out here. Defaults to --no-ff so the branch stays visible in the history instead of being fast-forwarded out of existence. A conflict is reported with git's own text and left exactly as git left it \u2014 this command never auto-resolves, auto-aborts, or auto-commits its way out.",
+      triggers: { ko: "\uBE0C\uB79C\uCE58 \uBA38\uC9C0 \uBCD1\uD569 \uD569\uCE58\uAE30" },
+      params: {
+        path: { type: "string", description: "Repository directory (omit = project root)" },
+        target: { type: "string", description: "Branch or commit to merge in", required: true },
+        noFf: { type: "boolean", description: "Keep the merge commit (default true)", default: true }
+      },
+      returns: "{ oid }",
+      examples: [`sok plugin.soksak-plugin-git-core.merge '{"target":"feat/x"}'`],
+      message: (d) => msg(`merged at ${d.oid.slice(0, 7)}`, `\uBA38\uC9C0 \uC644\uB8CC ${d.oid.slice(0, 7)}`),
+      handler: async (p) => {
+        const path = resolvePath(p);
+        if (!path) return noPath();
+        const target = String(p.target ?? "");
+        if (!validRef(target)) return badRef();
+        const args = ["merge"];
+        if (p.noFf !== false) args.push("--no-ff");
+        args.push("-m", `Merge ${target}`, "--", target);
+        const r = await runGit({ cwd: path, args, kind: "write" });
+        if (r.code !== 0) return gitErr(r);
+        const head = await runGit({ cwd: path, args: ["rev-parse", "HEAD"] });
+        if (head.code !== 0) return gitErr(head);
+        return { oid: head.stdout.trim() };
       }
     });
   },

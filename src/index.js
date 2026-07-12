@@ -1,6 +1,8 @@
 // soksak-plugin-git-core — git 실행 규약과 저장소 프리미티브의 단일진실.
-// 사다리: L0 발견(root)·init·clone / L1 status + git.changed 변경 이벤트 /
-// L2 worktree 프리미티브 / L3 stage·unstage·commit·discard(위험 선언).
+// soksak-git-spec@1 의 구현체다(매니페스트 implements) — 명령 이름·인자·응답·거부 코드와
+// 실행 규약은 계약이 정하고(SPEC.md), 적합성은 계약 repo 의 시험이 채점한다.
+// 사다리: L0 발견(root·head)·init·clone / L1 status + git.changed 변경 이벤트 /
+// L2 branch·worktree·삼점 diff / L3 stage·unstage·commit·discard·merge(위험 선언).
 // 코어와의 접점은 generic 뿐이다: process(스폰)·fs.watch(경로 감시)·bus(이벤트).
 // 실패 봉투 = { ok:false, code, message } (MESSAGE-PROTOCOL). git stderr 원문은
 // 파싱하지 않고 메시지로만 전달한다(원인 노출 — convention.js).
@@ -10,7 +12,9 @@ import {
   repoDirFromUrl,
   sanitizeCommit,
   validBranchName,
+  validRef,
 } from "./convention.js";
+import { mergeFileList, parseNameStatus, parseNumstat } from "./range.js";
 import { createGitRunner } from "./run.js";
 import { parseStatusV2 } from "./status.js";
 import { classifyChange, makeTrailingDebounce, watchDirs } from "./watch.js";
@@ -132,6 +136,31 @@ export default {
         } catch (e) {
           return { state: "error", error: String(e?.message ?? e) };
         }
+      },
+    });
+
+    reg("head", {
+      description:
+        "Read what is checked out here: the branch, its commit oid, and whether HEAD is detached. A detached HEAD reports branch:null and detached:true — it is a state to show, not an error.",
+      triggers: { ko: "현재 브랜치 확인 헤드 체크아웃" },
+      params: { path: { type: "string", description: "Repository directory (omit = project root)" } },
+      returns: "{ branch: string|null, oid, detached }",
+      examples: ["sok plugin.soksak-plugin-git-core.head"],
+      message: (d) =>
+        d.detached
+          ? msg(`detached at ${d.oid.slice(0, 7)}`, `분리된 HEAD ${d.oid.slice(0, 7)}`)
+          : msg(`on ${d.branch}`, `${d.branch} 브랜치`),
+      handler: async (p) => {
+        const path = resolvePath(p);
+        if (!path) return noPath();
+        const name = await runGit({ cwd: path, args: ["rev-parse", "--abbrev-ref", "HEAD"] });
+        if (name.code !== 0) return gitErr(name);
+        const oid = await runGit({ cwd: path, args: ["rev-parse", "HEAD"] });
+        if (oid.code !== 0) return gitErr(oid);
+        // 분리 HEAD 에서 --abbrev-ref 는 "HEAD" 를 낸다 — 그게 브랜치명이 아니라는 신호다.
+        const branch = name.stdout.trim();
+        const detached = branch === "HEAD";
+        return { branch: detached ? null : branch, oid: oid.stdout.trim(), detached };
       },
     });
 
@@ -262,39 +291,71 @@ export default {
     });
 
     // ── L2 ──────────────────────────────────────────────────────────────
-    reg("worktree.add", {
+    reg("branch.exists", {
       description:
-        "Add a worktree on a new branch: git worktree add --no-track -b <branch> <dir> <base>. Base defaults to HEAD and is recorded in repo config (soksak.worktree.<branch>.base). Default dir is <root>-wt/<branch-slug>, overridable via dir.",
-      triggers: { ko: "워크트리 추가 생성 브랜치 작업트리" },
+        "Does a local branch exist? The question a consumer must answer before choosing between creating a worktree on a new branch and attaching one to the branch it already has.",
+      triggers: { ko: "브랜치 존재 확인 있는지" },
       params: {
         path: { type: "string", description: "Repository directory (omit = project root)" },
-        branch: { type: "string", description: "New branch name", required: true },
-        base: { type: "string", description: "Base ref (default HEAD)" },
-        dir: { type: "string", description: "Worktree directory (default <root>-wt/<branch-slug>)" },
+        branch: { type: "string", description: "Branch name", required: true },
       },
-      returns: "{ dir, branch, base }",
-      examples: ['sok plugin.soksak-plugin-git-core.worktree.add \'{"branch":"feat/x"}\''],
-      message: (d) => msg(`worktree at ${d.dir}`, `워크트리 생성: ${d.dir}`),
+      returns: "{ exists }",
+      examples: ['sok plugin.soksak-plugin-git-core.branch.exists \'{"branch":"feat/x"}\''],
+      message: (d) => (d.exists ? msg("the branch exists", "브랜치가 있습니다") : msg("no such branch", "브랜치 없음")),
       handler: async (p) => {
         const path = resolvePath(p);
         if (!path) return noPath();
         const branch = String(p.branch ?? "");
         if (!validBranchName(branch)) return err("INVALID_BRANCH", msg("invalid branch name", "브랜치명 형식 위반"));
+        const r = await runGit({ cwd: path, args: ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`] });
+        if (r.code === 0) return { exists: true };
+        if (r.code === 1) return { exists: false }; // git 의 "없음" — 오류가 아니다
+        return gitErr(r);
+      },
+    });
+
+    reg("worktree.add", {
+      description:
+        "Add a worktree. By default it creates a NEW branch at base (default HEAD), and records the base in repo config (soksak.worktree.<branch>.base). With attach:true it checks out an EXISTING branch instead — the reopen path, where the branch survived the last close and carries the work. Default dir is <root>-wt/<branch-slug>, overridable via dir.",
+      triggers: { ko: "워크트리 추가 생성 브랜치 작업트리 재부착" },
+      params: {
+        path: { type: "string", description: "Repository directory (omit = project root)" },
+        branch: { type: "string", description: "Branch name — created, or attached with attach:true", required: true },
+        base: { type: "string", description: "Base ref for a new branch (default HEAD); ignored with attach" },
+        dir: { type: "string", description: "Worktree directory (default <root>-wt/<branch-slug>)" },
+        attach: { type: "boolean", description: "Check out the existing branch instead of creating it", default: false },
+      },
+      returns: "{ dir, branch, base, attached }",
+      examples: [
+        'sok plugin.soksak-plugin-git-core.worktree.add \'{"branch":"feat/x"}\'',
+        'sok plugin.soksak-plugin-git-core.worktree.add \'{"branch":"feat/x","attach":true}\'',
+      ],
+      message: (d) =>
+        d.attached
+          ? msg(`attached ${d.branch} at ${d.dir}`, `${d.branch} 재부착: ${d.dir}`)
+          : msg(`worktree at ${d.dir}`, `워크트리 생성: ${d.dir}`),
+      handler: async (p) => {
+        const path = resolvePath(p);
+        if (!path) return noPath();
+        const branch = String(p.branch ?? "");
+        if (!validBranchName(branch)) return err("INVALID_BRANCH", msg("invalid branch name", "브랜치명 형식 위반"));
+        const attach = p.attach === true;
         const base = typeof p.base === "string" && p.base ? p.base : "HEAD";
-        if (base !== "HEAD" && !validBranchName(base) && !sanitizeCommit(base)) {
+        if (!attach && base !== "HEAD" && !validRef(base)) {
           return err("INVALID_REF", msg("invalid base ref", "base 참조 형식 위반"));
         }
         const dir =
           typeof p.dir === "string" && p.dir ? p.dir : `${path}-wt/${branch.replaceAll("/", "-")}`;
-        const r = await runGit({
-          cwd: path,
-          args: ["worktree", "add", "--no-track", "-b", branch, "--", dir, base],
-          kind: "write",
-        });
+        // 부착은 브랜치를 만들지 않는다 — 없는 브랜치에 부착하면 git 이 거부한다(무언 생성 금지).
+        const args = attach
+          ? ["worktree", "add", "--", dir, branch]
+          : ["worktree", "add", "--no-track", "-b", branch, "--", dir, base];
+        const r = await runGit({ cwd: path, args, kind: "write" });
         if (r.code !== 0) return gitErr(r);
+        if (attach) return { dir, branch, base: null, attached: true };
         // base 박제 — 리뷰·머지 흐름이 분기점을 조회할 수 있게 repo config 에 남긴다.
         await runGit({ cwd: path, args: ["config", `soksak.worktree.${branch}.base`, base], kind: "write" });
-        return { dir, branch, base };
+        return { dir, branch, base, attached: false };
       },
     });
 
@@ -581,6 +642,114 @@ export default {
         const r = await runGit({ cwd: path, args });
         if (r.code !== 0) return gitErr(r);
         return { diff: r.stdout };
+      },
+    });
+
+    // ── 삼점 diff (base...target) — "이 브랜치가 갈라진 뒤 무엇을 했나" ──────
+    // 이점(base..target)이 아닌 이유: base 가 그 사이에 쌓은 커밋까지 이 브랜치가 한 일로 보고한다.
+    // base 생략 시 로컬 기본 브랜치를 해소한다. 없으면 거부 — HEAD 로 조용히 대체하면 삼점의
+    // 답이 늘 공집합이 되어 "변경 없음"처럼 보인다.
+    async function resolveBase(path, raw) {
+      if (typeof raw === "string" && raw) return validRef(raw) ? raw : false;
+      for (const b of ["main", "master"]) {
+        const r = await runGit({ cwd: path, args: ["show-ref", "--verify", "--quiet", `refs/heads/${b}`] });
+        if (r.code === 0) return b;
+      }
+      return null;
+    }
+    const noBase = () =>
+      err("NO_BASE", msg("no default branch — pass base", "기본 브랜치 없음 — base 를 지정하세요"));
+    const badRef = () => err("INVALID_REF", msg("ref not allowed", "허용되지 않는 참조"));
+
+    reg("diff.files", {
+      description:
+        "List what a branch changed since it diverged: the three-dot range base...target. Each file carries its status and its line counts; a binary file reports binary:true with null counts rather than pretending nothing changed.",
+      triggers: { ko: "브랜치 변경 파일 목록 리뷰 대상 비교" },
+      params: {
+        path: { type: "string", description: "Repository directory (omit = project root)" },
+        base: { type: "string", description: "Base ref (omit = the local default branch)" },
+        target: { type: "string", description: "Branch or commit under review", required: true },
+      },
+      returns: "{ base, target, files: [{path, status, oldPath?, added, deleted, binary}] }",
+      examples: ['sok plugin.soksak-plugin-git-core.diff.files \'{"target":"feat/x"}\''],
+      message: (d) => msg(`${d.files.length} files changed`, `변경 파일 ${d.files.length}개`),
+      handler: async (p) => {
+        const path = resolvePath(p);
+        if (!path) return noPath();
+        const target = String(p.target ?? "");
+        if (!validRef(target)) return badRef();
+        const base = await resolveBase(path, p.base);
+        if (base === false) return badRef();
+        if (base === null) return noBase();
+        const range = `${base}...${target}`;
+        const ns = await runGit({ cwd: path, args: ["diff", "--name-status", range] });
+        if (ns.code !== 0) return gitErr(ns);
+        const nm = await runGit({ cwd: path, args: ["diff", "--numstat", range] });
+        if (nm.code !== 0) return gitErr(nm);
+        return { base, target, files: mergeFileList(parseNameStatus(ns.stdout), parseNumstat(nm.stdout)) };
+      },
+    });
+
+    reg("diff.range", {
+      description:
+        "The unified diff of the three-dot range base...target, optionally narrowed to one file behind the -- path boundary. The two-point diff command answers about the working tree; this one answers about a branch.",
+      triggers: { ko: "브랜치 변경 내용 비교 리뷰 diff" },
+      params: {
+        path: { type: "string", description: "Repository directory (omit = project root)" },
+        base: { type: "string", description: "Base ref (omit = the local default branch)" },
+        target: { type: "string", description: "Branch or commit under review", required: true },
+        file: { type: "string", description: "Limit to this repository-relative path" },
+      },
+      returns: "{ base, target, diff }",
+      examples: ['sok plugin.soksak-plugin-git-core.diff.range \'{"target":"feat/x","file":"src/a.ts"}\''],
+      message: (d) => (d.diff.trim() ? msg("changes found", "변경 있음") : msg("no changes", "변경 없음")),
+      handler: async (p) => {
+        const path = resolvePath(p);
+        if (!path) return noPath();
+        const target = String(p.target ?? "");
+        if (!validRef(target)) return badRef();
+        const base = await resolveBase(path, p.base);
+        if (base === false) return badRef();
+        if (base === null) return noBase();
+        const args = ["diff", `${base}...${target}`];
+        if (typeof p.file === "string" && p.file) {
+          if (!insideRepo(path, p.file)) {
+            return err("INVALID_PARAMS", msg("path escapes the repository", "저장소 밖 경로"));
+          }
+          args.push("--", p.file);
+        }
+        const r = await runGit({ cwd: path, args });
+        if (r.code !== 0) return gitErr(r);
+        return { base, target, diff: r.stdout };
+      },
+    });
+
+    reg("merge", {
+      danger: "destructive",
+      description:
+        "Merge a branch into what is checked out here. Defaults to --no-ff so the branch stays visible in the history instead of being fast-forwarded out of existence. A conflict is reported with git's own text and left exactly as git left it — this command never auto-resolves, auto-aborts, or auto-commits its way out.",
+      triggers: { ko: "브랜치 머지 병합 합치기" },
+      params: {
+        path: { type: "string", description: "Repository directory (omit = project root)" },
+        target: { type: "string", description: "Branch or commit to merge in", required: true },
+        noFf: { type: "boolean", description: "Keep the merge commit (default true)", default: true },
+      },
+      returns: "{ oid }",
+      examples: ['sok plugin.soksak-plugin-git-core.merge \'{"target":"feat/x"}\''],
+      message: (d) => msg(`merged at ${d.oid.slice(0, 7)}`, `머지 완료 ${d.oid.slice(0, 7)}`),
+      handler: async (p) => {
+        const path = resolvePath(p);
+        if (!path) return noPath();
+        const target = String(p.target ?? "");
+        if (!validRef(target)) return badRef();
+        const args = ["merge"];
+        if (p.noFf !== false) args.push("--no-ff");
+        args.push("-m", `Merge ${target}`, "--", target);
+        const r = await runGit({ cwd: path, args, kind: "write" });
+        if (r.code !== 0) return gitErr(r);
+        const head = await runGit({ cwd: path, args: ["rev-parse", "HEAD"] });
+        if (head.code !== 0) return gitErr(head);
+        return { oid: head.stdout.trim() };
       },
     });
   },

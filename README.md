@@ -5,6 +5,13 @@ convention and repository primitives. The core app keeps no git knowledge —
 this plugin talks to generic core surfaces only: `process` (spawn),
 `fs.watch`/`fs.unwatch` (path-level watch), and the plugin bus (events).
 
+It **implements `soksak-git-spec@1`** (manifest `implements`): the command names,
+their arguments, their answers, their refusal codes, and the execution convention
+below are the contract's, not this plugin's. The contract text and the acceptance
+suite that decides whether this plugin conforms live in `soksak-contract-git`.
+A consumer resolves this plugin by contract id
+(`sok plugin.implementers '{"contract":"soksak-git-spec@1"}'`) and never by name.
+
 ## Execution convention (src/convention.js)
 
 - Every spawn pins `LC_ALL=C` / `LANG=C` — output never varies with the host
@@ -21,14 +28,14 @@ this plugin talks to generic core surfaces only: `process` (spawn),
 
 | Layer | Commands |
 |---|---|
-| L0 discovery | `root` (tri-state: repo / not-repo / error), `init` (idempotent, `-b main`), `clone` (validated target name, progress events) |
+| L0 discovery | `root` (tri-state: repo / not-repo / error), `head` (branch, oid, detached), `init` (idempotent, `-b main`), `clone` (validated target name, progress events) |
 | L1 status | `status` (porcelain v2 `--branch`: branch, upstream, ahead/behind, decoration classes, `truncated` cap), `watch.start` / `watch.stop` / `watch.list` |
-| L2 worktree | `worktree.add` (`--no-track -b`, base recorded as `soksak.worktree.<branch>.base`), `worktree.list`, `worktree.remove` (refuses dirty trees), `worktree.remove.force` (destructive), `worktree.prune` |
-| L3 write | `stage`, `unstage`, `commit`, `discard` — all declared destructive; `discard` deletes untracked files only after every path proves it stays inside the repository |
+| L2 read | `log`, `show`, `diff` (working tree / index / one commit), `diff.files` and `diff.range` (the three-dot range `base...target` — what a branch did since it diverged) |
+| L2 branch & worktree | `branch.exists`, `worktree.add` (a new branch at `base`, recorded as `soksak.worktree.<branch>.base`; `attach:true` checks out an existing branch instead), `worktree.list`, `worktree.remove` (refuses dirty trees), `worktree.remove.force` (destructive), `worktree.prune` |
+| L3 write | `stage`, `unstage`, `commit`, `discard`, `merge` — all declared destructive; `discard` deletes untracked files only after every path proves it stays inside the repository; `merge` defaults to `--no-ff` and leaves a conflict exactly as git left it |
 
 All commands run as `sok plugin.soksak-plugin-git-core.<name>`. `path` defaults
-to the active project root. The read trio `log` / `show` / `diff` mirrors the
-legacy core surface so consumer plugins can rewire without behavior change.
+to the active project root.
 
 ## git.changed event
 

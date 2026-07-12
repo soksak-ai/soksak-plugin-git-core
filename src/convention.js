@@ -38,6 +38,12 @@ export function validBranchName(b) {
   return true;
 }
 
+// ref 규칙 — 브랜치명이거나 커밋 참조. diff·merge 처럼 "브랜치든 커밋이든 받는" 표면의 게이트.
+// ".." 는 range 문법이라 여기서 막힌다(삼점 range 는 우리가 조립한다 — 입력이 가져오지 않는다).
+export function validRef(r) {
+  return validBranchName(r) || sanitizeCommit(r);
+}
+
 // clone url → 대상 디렉토리명. 슬러그+점만 허용(탈출·주입·"-" 시작 차단), 아니면 null —
 // 호출자는 null 이면 거부한다(repo 명 검증 계약).
 export function repoDirFromUrl(url) {
