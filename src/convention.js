@@ -75,12 +75,35 @@ export function repoDirFromUrl(url) {
 // 이 문구를 판(버전) 간 안정 문자열로 만들며, 사용 지점은 이 정규식 하나로 제한한다.
 export const NOT_REPO_RE = /not a git repository/i;
 
-// 경로가 repo 루트 안에 있는지 증명(문자열 정규화 기준) — discard 의 untracked 삭제 등
-// 파괴 작업 전 필수 검증. 절대경로·".." 탈출은 false.
-export function insideRepo(root, rel) {
+// 제어문자 — 인자에 실릴 수 없다. 특히 NUL 은 argv 에 들어갈 수 없어서, 걸러내지 않으면 spawn 이
+// 예외를 던진다: 크래시는 거부가 아니다(계약은 "아무것도 실행되지 않았다"까지 요구한다).
+const CONTROL_RE = /[\u0000-\u001f\u007f]/;
+
+// 저장소 상대 경로임을 실행 전에 증명한다 — 절대경로·".." 탈출·"-" 시작(옵션 형태)·제어문자는 전부
+// 거부. 파괴 명령(discard)이 repo 밖을 지우는 최악을 여기서 막고, 읽기 명령도 같은 규칙을 탄다:
+// 규칙이 명령마다 다르면 공격자는 느슨한 명령을 고른다.
+export function validPath(rel) {
   if (typeof rel !== "string" || rel.length === 0) return false;
   if (rel.startsWith("/") || rel.startsWith("-")) return false;
+  if (CONTROL_RE.test(rel)) return false;
   const parts = rel.split("/");
   if (parts.includes("..") || parts.includes("")) return false;
+  return true;
+}
+
+// clone URL 검증. 두 가지를 막는다:
+//   - 옵션 주입("-" 시작)과 제어문자.
+//   - http(s) 의 userinfo(`https://user:token@host/…`). git 은 받은 URL 을 그대로 .git/config 의
+//     remote.origin.url 에 적는다 — 토큰이 평문으로 디스크에 남고 지워지지 않는다. 게다가 파라미터
+//     자체가 호스트 명령 표면(로그·활동 피드)을 지난다. 자격증명은 credential helper 의 것이지
+//     인자의 것이 아니다. ssh/scp 형(git@host:path)의 사용자명은 비밀이 아니므로 허용한다.
+export function validCloneUrl(url) {
+  if (typeof url !== "string" || url.length === 0) return false;
+  if (url.startsWith("-") || CONTROL_RE.test(url)) return false;
+  const m = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/([^/]*)/.exec(url);
+  if (m) {
+    const scheme = m[1].toLowerCase();
+    if ((scheme === "http" || scheme === "https") && m[2].includes("@")) return false;
+  }
   return true;
 }

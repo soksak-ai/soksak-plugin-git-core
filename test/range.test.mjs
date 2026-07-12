@@ -54,3 +54,28 @@ test("validRef — 브랜치명과 커밋은 통과, range 문법·옵션 주입
   assert.equal(validRef("../../etc"), false);
   assert.equal(validRef("x.lock"), false);
 });
+
+test("validPath — 저장소 상대 경로만 통과(절대·탈출·옵션형·제어문자 거부)", async () => {
+  const { validPath } = await import("../src/convention.js");
+  assert.equal(validPath("src/a.ts"), true);
+  assert.equal(validPath("a b.txt"), true); // 공백은 합법적인 파일명이다
+  assert.equal(validPath("/etc/passwd"), false);
+  assert.equal(validPath("../../etc/passwd"), false);
+  assert.equal(validPath("--output=/tmp/x"), false);
+  assert.equal(validPath(""), false);
+  // NUL 은 argv 에 들어갈 수 없다 — 걸러내지 않으면 spawn 이 예외를 던진다(크래시는 거부가 아니다).
+  assert.equal(validPath(`a${String.fromCharCode(0)}b`), false);
+  assert.equal(validPath(`a${String.fromCharCode(10)}b`), false);
+});
+
+test("validCloneUrl — http(s) 자격증명 거부, ssh 사용자명은 허용", async () => {
+  const { validCloneUrl } = await import("../src/convention.js");
+  assert.equal(validCloneUrl("https://github.com/u/r.git"), true);
+  assert.equal(validCloneUrl("git@github.com:u/r.git"), true); // scp 형 사용자명은 비밀이 아니다
+  assert.equal(validCloneUrl("ssh://git@host/u/r.git"), true);
+  // git 은 받은 URL 을 .git/config 에 그대로 적는다 — 토큰이 평문으로 디스크에 남는다.
+  assert.equal(validCloneUrl("https://alice:s3cr3t@host/r.git"), false);
+  assert.equal(validCloneUrl("https://ghp_token@host/r.git"), false);
+  assert.equal(validCloneUrl("--upload-pack=touch /tmp/pwned"), false);
+  assert.equal(validCloneUrl(""), false);
+});

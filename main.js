@@ -46,11 +46,23 @@ function repoDirFromUrl(url) {
   return name;
 }
 var NOT_REPO_RE = /not a git repository/i;
-function insideRepo(root, rel) {
+var CONTROL_RE = /[\u0000-\u001f\u007f]/;
+function validPath(rel) {
   if (typeof rel !== "string" || rel.length === 0) return false;
   if (rel.startsWith("/") || rel.startsWith("-")) return false;
+  if (CONTROL_RE.test(rel)) return false;
   const parts = rel.split("/");
   if (parts.includes("..") || parts.includes("")) return false;
+  return true;
+}
+function validCloneUrl(url) {
+  if (typeof url !== "string" || url.length === 0) return false;
+  if (url.startsWith("-") || CONTROL_RE.test(url)) return false;
+  const m = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/([^/]*)/.exec(url);
+  if (m) {
+    const scheme = m[1].toLowerCase();
+    if ((scheme === "http" || scheme === "https") && m[2].includes("@")) return false;
+  }
   return true;
 }
 
@@ -439,6 +451,15 @@ var index_default = {
       handler: async (p) => {
         const parent = resolvePath(p);
         if (!parent) return noPath();
+        if (!validCloneUrl(p.url)) {
+          return err(
+            "INVALID_URL",
+            msg(
+              "url not allowed \u2014 no credentials in the url (use the credential helper), no option-shaped url",
+              "\uD5C8\uC6A9\uB418\uC9C0 \uC54A\uB294 url \u2014 url \uC5D0 \uC790\uACA9\uC99D\uBA85 \uAE08\uC9C0(credential helper \uC0AC\uC6A9), \uC635\uC158 \uD615\uD0DC \uAE08\uC9C0"
+            )
+          );
+        }
         const name = typeof p.dir === "string" && p.dir ? p.dir : repoDirFromUrl(p.url);
         if (!name || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
           return err("INVALID_URL", msg("cannot derive a safe directory name from url", "url \uC5D0\uC11C \uC548\uC804\uD55C \uB514\uB809\uD1A0\uB9AC\uBA85\uC744 \uC720\uB3C4\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4"));
@@ -644,10 +665,14 @@ var index_default = {
         return { done: true };
       }
     });
+    const badPath = (f) => err("INVALID_PATH", msg(`not a repository-relative path: ${f}`, `\uC800\uC7A5\uC18C \uC0C1\uB300 \uACBD\uB85C\uAC00 \uC544\uB2D8: ${f}`));
     const requireFiles = (p) => {
       const files = Array.isArray(p.files) ? p.files.map(String) : [];
-      if (files.length === 0) return null;
-      return files;
+      if (files.length === 0) return { error: err("NO_FILES", msg("files required", "files \uD544\uC694")) };
+      for (const f of files) {
+        if (!validPath(f)) return { error: badPath(f) };
+      }
+      return { files };
     };
     reg("stage", {
       danger: "destructive",
@@ -663,8 +688,9 @@ var index_default = {
       handler: async (p) => {
         const path = resolvePath(p);
         if (!path) return noPath();
-        const files = requireFiles(p);
-        if (!files) return err("NO_FILES", msg("files required", "files \uD544\uC694"));
+        const picked = requireFiles(p);
+        if (picked.error) return picked.error;
+        const files = picked.files;
         const r = await runGit({ cwd: path, args: ["add", "--", ...files], kind: "write" });
         if (r.code !== 0) return gitErr(r);
         return { staged: files };
@@ -684,8 +710,9 @@ var index_default = {
       handler: async (p) => {
         const path = resolvePath(p);
         if (!path) return noPath();
-        const files = requireFiles(p);
-        if (!files) return err("NO_FILES", msg("files required", "files \uD544\uC694"));
+        const picked = requireFiles(p);
+        if (picked.error) return picked.error;
+        const files = picked.files;
         const r = await runGit({ cwd: path, args: ["restore", "--staged", "--", ...files], kind: "write" });
         if (r.code !== 0) return gitErr(r);
         return { unstaged: files };
@@ -728,13 +755,9 @@ var index_default = {
       handler: async (p) => {
         const path = resolvePath(p);
         if (!path) return noPath();
-        const files = requireFiles(p);
-        if (!files) return err("NO_FILES", msg("files required", "files \uD544\uC694"));
-        for (const f of files) {
-          if (!insideRepo(path, f)) {
-            return err("PATH_OUTSIDE_REPO", msg(`path escapes the repository: ${f}`, `repo \uBC16 \uACBD\uB85C: ${f}`));
-          }
-        }
+        const picked = requireFiles(p);
+        if (picked.error) return picked.error;
+        const files = picked.files;
         if (p.untracked === true) {
           const r2 = await runGit({ cwd: path, args: ["clean", "-f", "--", ...files], kind: "write" });
           if (r2.code !== 0) return gitErr(r2);
@@ -831,7 +854,10 @@ var index_default = {
         } else {
           args = ["diff"];
         }
-        if (typeof p.file === "string" && p.file) args.push("--", p.file);
+        if (typeof p.file === "string" && p.file) {
+          if (!validPath(p.file)) return badPath(p.file);
+          args.push("--", p.file);
+        }
         const r = await runGit({ cwd: path, args });
         if (r.code !== 0) return gitErr(r);
         return { diff: r.stdout };
@@ -896,9 +922,7 @@ var index_default = {
         if (base === null) return noBase();
         const args = ["diff", `${base}...${target}`];
         if (typeof p.file === "string" && p.file) {
-          if (!insideRepo(path, p.file)) {
-            return err("INVALID_PARAMS", msg("path escapes the repository", "\uC800\uC7A5\uC18C \uBC16 \uACBD\uB85C"));
-          }
+          if (!validPath(p.file)) return badPath(p.file);
           args.push("--", p.file);
         }
         const r = await runGit({ cwd: path, args });

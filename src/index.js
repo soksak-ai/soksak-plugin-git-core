@@ -8,10 +8,11 @@
 // 파싱하지 않고 메시지로만 전달한다(원인 노출 — convention.js).
 import {
   NOT_REPO_RE,
-  insideRepo,
   repoDirFromUrl,
   sanitizeCommit,
   validBranchName,
+  validCloneUrl,
+  validPath,
   validRef,
 } from "./convention.js";
 import { mergeFileList, parseNameStatus, parseNumstat } from "./range.js";
@@ -202,6 +203,16 @@ export default {
       handler: async (p) => {
         const parent = resolvePath(p);
         if (!parent) return noPath();
+        // URL 검증이 먼저다 — 자격증명이 실린 URL 은 git 이 .git/config 에 평문으로 박제한다.
+        if (!validCloneUrl(p.url)) {
+          return err(
+            "INVALID_URL",
+            msg(
+              "url not allowed — no credentials in the url (use the credential helper), no option-shaped url",
+              "허용되지 않는 url — url 에 자격증명 금지(credential helper 사용), 옵션 형태 금지",
+            ),
+          );
+        }
         const name = typeof p.dir === "string" && p.dir ? p.dir : repoDirFromUrl(p.url);
         if (!name || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
           return err("INVALID_URL", msg("cannot derive a safe directory name from url", "url 에서 안전한 디렉토리명을 유도할 수 없습니다"));
@@ -437,10 +448,18 @@ export default {
     });
 
     // ── L3 ──────────────────────────────────────────────────────────────
+    const badPath = (f) =>
+      err("INVALID_PATH", msg(`not a repository-relative path: ${f}`, `저장소 상대 경로가 아님: ${f}`));
+
+    // files 파라미터의 단일 관문 — 경로 증명이 여기 한 곳에 있다. 명령마다 따로 검사하면
+    // 언젠가 한 명령이 빠지고, 공격자는 그 명령을 고른다. { files } 또는 { error } 를 답한다.
     const requireFiles = (p) => {
       const files = Array.isArray(p.files) ? p.files.map(String) : [];
-      if (files.length === 0) return null;
-      return files;
+      if (files.length === 0) return { error: err("NO_FILES", msg("files required", "files 필요")) };
+      for (const f of files) {
+        if (!validPath(f)) return { error: badPath(f) };
+      }
+      return { files };
     };
 
     reg("stage", {
@@ -457,8 +476,9 @@ export default {
       handler: async (p) => {
         const path = resolvePath(p);
         if (!path) return noPath();
-        const files = requireFiles(p);
-        if (!files) return err("NO_FILES", msg("files required", "files 필요"));
+        const picked = requireFiles(p);
+        if (picked.error) return picked.error;
+        const files = picked.files;
         const r = await runGit({ cwd: path, args: ["add", "--", ...files], kind: "write" });
         if (r.code !== 0) return gitErr(r);
         return { staged: files };
@@ -479,8 +499,9 @@ export default {
       handler: async (p) => {
         const path = resolvePath(p);
         if (!path) return noPath();
-        const files = requireFiles(p);
-        if (!files) return err("NO_FILES", msg("files required", "files 필요"));
+        const picked = requireFiles(p);
+        if (picked.error) return picked.error;
+        const files = picked.files;
         const r = await runGit({ cwd: path, args: ["restore", "--staged", "--", ...files], kind: "write" });
         if (r.code !== 0) return gitErr(r);
         return { unstaged: files };
@@ -527,14 +548,9 @@ export default {
       handler: async (p) => {
         const path = resolvePath(p);
         if (!path) return noPath();
-        const files = requireFiles(p);
-        if (!files) return err("NO_FILES", msg("files required", "files 필요"));
-        // 경로 증명 — repo 밖(절대경로·..·옵션형)을 하나라도 포함하면 전체 거부.
-        for (const f of files) {
-          if (!insideRepo(path, f)) {
-            return err("PATH_OUTSIDE_REPO", msg(`path escapes the repository: ${f}`, `repo 밖 경로: ${f}`));
-          }
-        }
+        const picked = requireFiles(p);
+        if (picked.error) return picked.error;
+        const files = picked.files;
         if (p.untracked === true) {
           const r = await runGit({ cwd: path, args: ["clean", "-f", "--", ...files], kind: "write" });
           if (r.code !== 0) return gitErr(r);
@@ -638,7 +654,10 @@ export default {
         } else {
           args = ["diff"];
         }
-        if (typeof p.file === "string" && p.file) args.push("--", p.file);
+        if (typeof p.file === "string" && p.file) {
+          if (!validPath(p.file)) return badPath(p.file);
+          args.push("--", p.file);
+        }
         const r = await runGit({ cwd: path, args });
         if (r.code !== 0) return gitErr(r);
         return { diff: r.stdout };
@@ -713,9 +732,7 @@ export default {
         if (base === null) return noBase();
         const args = ["diff", `${base}...${target}`];
         if (typeof p.file === "string" && p.file) {
-          if (!insideRepo(path, p.file)) {
-            return err("INVALID_PARAMS", msg("path escapes the repository", "저장소 밖 경로"));
-          }
+          if (!validPath(p.file)) return badPath(p.file);
           args.push("--", p.file);
         }
         const r = await runGit({ cwd: path, args });
