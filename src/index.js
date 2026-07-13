@@ -1,5 +1,5 @@
 // soksak-plugin-git-core — git 실행 규약과 저장소 프리미티브의 단일진실.
-// soksak-git-spec@1 의 구현체다(매니페스트 implements) — 명령 이름·인자·응답·거부 코드와
+// soksak-spec-plugin-git 의 구현체다(매니페스트 implements) — 명령 이름·인자·응답·거부 코드와
 // 실행 규약은 계약이 정하고(SPEC.md), 적합성은 계약 repo 의 시험이 채점한다.
 // 사다리: L0 발견(root·head)·init·clone / L1 status + git.changed 변경 이벤트 /
 // L2 branch·worktree·삼점 diff / L3 stage·unstage·commit·discard·merge(위험 선언).

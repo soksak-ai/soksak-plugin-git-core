@@ -5,12 +5,12 @@ convention and repository primitives. The core app keeps no git knowledge —
 this plugin talks to generic core surfaces only: `process` (spawn),
 `fs.watch`/`fs.unwatch` (path-level watch), and the plugin bus (events).
 
-It **implements `soksak-git-spec@1`** (manifest `implements`): the command names,
+It **implements `soksak-spec-plugin-git`** (manifest `implements`): the command names,
 their arguments, their answers, their refusal codes, and the execution convention
 below are the contract's, not this plugin's. The contract text and the acceptance
 suite that decides whether this plugin conforms live in `soksak-contract-git`.
 A consumer resolves this plugin by contract id
-(`sok plugin.implementers '{"contract":"soksak-git-spec@1"}'`) and never by name.
+(`sok plugin.implementers '{"contract":"soksak-spec-plugin-git"}'`) and never by name.
 
 ## Execution convention (src/convention.js)
 

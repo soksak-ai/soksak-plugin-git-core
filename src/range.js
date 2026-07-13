@@ -1,4 +1,4 @@
-// 삼점(base...target) 변경 목록 파서 — 계약 diff.files 의 순수부(soksak-git-spec@1 §7.3).
+// 삼점(base...target) 변경 목록 파서 — 계약 diff.files 의 순수부(soksak-spec-plugin-git §7.3).
 // 두 출력을 합친다: --name-status(무엇이 어떻게 바뀌었나) + --numstat(몇 줄).
 // 삼점인 이유: base..target(이점)은 base 가 그동안 쌓은 커밋까지 이 브랜치가 한 일로 보고한다.
 
