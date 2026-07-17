@@ -2,13 +2,12 @@
   "spec": "soksak-spec-plugin@0.0.1",
   "id": "soksak-plugin-git-core",
   "name": {
-    "ko": "git 라이브러리",
+    "ko": "git \ub77c\uc774\ube0c\ub7ec\ub9ac",
     "en": "Git library"
   },
   "version": "0.0.1",
-  "repo": "https://github.com/soksak-ai/soksak-plugin-git-core.git",
   "description": {
-    "ko": "git 실행 규약과 저장소 프리미티브의 단일진실. 발견(root)·init·clone, porcelain v2 status 와 git.changed 변경 이벤트, worktree 프리미티브, stage/commit/discard 를 커맨드로 노출합니다.",
+    "ko": "git \uc2e4\ud589 \uaddc\uc57d\uacfc \uc800\uc7a5\uc18c \ud504\ub9ac\ubbf8\ud2f0\ube0c\uc758 \ub2e8\uc77c\uc9c4\uc2e4. \ubc1c\uacac(root)\u00b7init\u00b7clone, porcelain v2 status \uc640 git.changed \ubcc0\uacbd \uc774\ubca4\ud2b8, worktree \ud504\ub9ac\ubbf8\ud2f0\ube0c, stage/commit/discard \ub97c \ucee4\ub9e8\ub4dc\ub85c \ub178\ucd9c\ud569\ub2c8\ub2e4.",
     "en": "Single truth for the git execution convention and repository primitives. Exposes discovery (root), init, clone, porcelain v2 status with git.changed events, worktree primitives, and stage/commit/discard as commands."
   },
   "entry": "main.js",
@@ -29,126 +28,126 @@
       {
         "name": "root",
         "title": {
-          "ko": "저장소 판별",
+          "ko": "\uc800\uc7a5\uc18c \ud310\ubcc4",
           "en": "Locate repository root"
         }
       },
       {
         "name": "head",
         "title": {
-          "ko": "현재 브랜치 확인",
+          "ko": "\ud604\uc7ac \ube0c\ub79c\uce58 \ud655\uc778",
           "en": "Read the checked-out branch"
         }
       },
       {
         "name": "init",
         "title": {
-          "ko": "저장소 초기화",
+          "ko": "\uc800\uc7a5\uc18c \ucd08\uae30\ud654",
           "en": "Initialize a repository"
         }
       },
       {
         "name": "clone",
         "title": {
-          "ko": "저장소 복제",
+          "ko": "\uc800\uc7a5\uc18c \ubcf5\uc81c",
           "en": "Clone a repository"
         }
       },
       {
         "name": "status",
         "title": {
-          "ko": "저장소 상태 조회",
+          "ko": "\uc800\uc7a5\uc18c \uc0c1\ud0dc \uc870\ud68c",
           "en": "Read repository status"
         }
       },
       {
         "name": "log",
         "title": {
-          "ko": "커밋 이력 조회",
+          "ko": "\ucee4\ubc0b \uc774\ub825 \uc870\ud68c",
           "en": "Read the commit log"
         }
       },
       {
         "name": "show",
         "title": {
-          "ko": "커밋 상세 확인",
+          "ko": "\ucee4\ubc0b \uc0c1\uc138 \ud655\uc778",
           "en": "Show a commit"
         }
       },
       {
         "name": "diff",
         "title": {
-          "ko": "변경 내용 비교",
+          "ko": "\ubcc0\uacbd \ub0b4\uc6a9 \ube44\uad50",
           "en": "Show the diff"
         }
       },
       {
         "name": "diff.files",
         "title": {
-          "ko": "브랜치 변경 파일 목록",
+          "ko": "\ube0c\ub79c\uce58 \ubcc0\uacbd \ud30c\uc77c \ubaa9\ub85d",
           "en": "List a branch's changed files"
         }
       },
       {
         "name": "diff.range",
         "title": {
-          "ko": "브랜치 변경 내용 비교",
+          "ko": "\ube0c\ub79c\uce58 \ubcc0\uacbd \ub0b4\uc6a9 \ube44\uad50",
           "en": "Show a branch's diff"
         }
       },
       {
         "name": "branch.exists",
         "title": {
-          "ko": "브랜치 존재 확인",
+          "ko": "\ube0c\ub79c\uce58 \uc874\uc7ac \ud655\uc778",
           "en": "Check a branch exists"
         }
       },
       {
         "name": "watch.start",
         "title": {
-          "ko": "변경 감시 시작",
+          "ko": "\ubcc0\uacbd \uac10\uc2dc \uc2dc\uc791",
           "en": "Start change watch"
         }
       },
       {
         "name": "watch.stop",
         "title": {
-          "ko": "변경 감시 중지",
+          "ko": "\ubcc0\uacbd \uac10\uc2dc \uc911\uc9c0",
           "en": "Stop change watch"
         }
       },
       {
         "name": "watch.list",
         "title": {
-          "ko": "변경 감시 목록",
+          "ko": "\ubcc0\uacbd \uac10\uc2dc \ubaa9\ub85d",
           "en": "List change watches"
         }
       },
       {
         "name": "worktree.add",
         "title": {
-          "ko": "워크트리 추가",
+          "ko": "\uc6cc\ud06c\ud2b8\ub9ac \ucd94\uac00",
           "en": "Add a worktree"
         }
       },
       {
         "name": "worktree.list",
         "title": {
-          "ko": "워크트리 목록",
+          "ko": "\uc6cc\ud06c\ud2b8\ub9ac \ubaa9\ub85d",
           "en": "List worktrees"
         }
       },
       {
         "name": "worktree.remove",
         "title": {
-          "ko": "워크트리 제거",
+          "ko": "\uc6cc\ud06c\ud2b8\ub9ac \uc81c\uac70",
           "en": "Remove a worktree"
         }
       },
       {
         "name": "worktree.remove.force",
         "title": {
-          "ko": "워크트리 강제 제거",
+          "ko": "\uc6cc\ud06c\ud2b8\ub9ac \uac15\uc81c \uc81c\uac70",
           "en": "Force-remove a worktree"
         },
         "danger": "destructive"
@@ -156,14 +155,14 @@
       {
         "name": "worktree.prune",
         "title": {
-          "ko": "워크트리 정리",
+          "ko": "\uc6cc\ud06c\ud2b8\ub9ac \uc815\ub9ac",
           "en": "Prune worktrees"
         }
       },
       {
         "name": "stage",
         "title": {
-          "ko": "변경 스테이지",
+          "ko": "\ubcc0\uacbd \uc2a4\ud14c\uc774\uc9c0",
           "en": "Stage changes"
         },
         "danger": "destructive"
@@ -171,7 +170,7 @@
       {
         "name": "unstage",
         "title": {
-          "ko": "스테이지 해제",
+          "ko": "\uc2a4\ud14c\uc774\uc9c0 \ud574\uc81c",
           "en": "Unstage changes"
         },
         "danger": "destructive"
@@ -179,7 +178,7 @@
       {
         "name": "commit",
         "title": {
-          "ko": "커밋 생성",
+          "ko": "\ucee4\ubc0b \uc0dd\uc131",
           "en": "Create a commit"
         },
         "danger": "destructive"
@@ -187,7 +186,7 @@
       {
         "name": "discard",
         "title": {
-          "ko": "변경 파기",
+          "ko": "\ubcc0\uacbd \ud30c\uae30",
           "en": "Discard changes"
         },
         "danger": "destructive"
@@ -195,7 +194,7 @@
       {
         "name": "merge",
         "title": {
-          "ko": "브랜치 머지",
+          "ko": "\ube0c\ub79c\uce58 \uba38\uc9c0",
           "en": "Merge a branch"
         },
         "danger": "destructive"
